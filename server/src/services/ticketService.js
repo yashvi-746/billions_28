@@ -2,6 +2,17 @@ import { query } from '../db/pool.js';
 
 const PAGE_SIZE = 20;
 
+// sortBy/order come straight from query-string input and are interpolated
+// into the SQL string (mysql2 placeholders can't parameterise identifiers),
+// so they must be resolved against a fixed whitelist rather than trusted.
+const SORTABLE_COLUMNS = {
+  created_at: 't.created_at',
+  updated_at: 't.updated_at',
+  priority: 't.priority',
+  status: 't.status',
+};
+const SORT_ORDERS = { asc: 'ASC', desc: 'DESC' };
+
 /**
  * Paginated ticket list for the current organisation.
  *
@@ -26,7 +37,10 @@ export async function listTickets({ orgId, page = 1, search = '', status, priori
   }
 
   const whereSql = where.join(' AND ');
-  const offset = page * PAGE_SIZE;
+  const safePage = Math.max(1, Number(page) || 1);
+  const offset = (safePage - 1) * PAGE_SIZE;
+  const orderColumn = SORTABLE_COLUMNS[sortBy] || SORTABLE_COLUMNS.created_at;
+  const orderDirection = SORT_ORDERS[String(order).toLowerCase()] || SORT_ORDERS.desc;
 
   const rows = await query(
     `SELECT t.id, t.subject, t.status, t.priority, t.created_at, t.updated_at,
@@ -35,7 +49,7 @@ export async function listTickets({ orgId, page = 1, search = '', status, priori
        LEFT JOIN users u ON u.id = t.assignee_id
        JOIN users r ON r.id = t.requester_id
       WHERE ${whereSql}
-      ORDER BY t.${sortBy} ${order}
+      ORDER BY ${orderColumn} ${orderDirection}
       LIMIT ? OFFSET ?`,
     [...params, PAGE_SIZE, offset]
   );
@@ -51,7 +65,7 @@ export async function listTickets({ orgId, page = 1, search = '', status, priori
     params
   );
 
-  return { rows, total, page, pageSize: PAGE_SIZE };
+  return { rows, total, page: safePage, pageSize: PAGE_SIZE };
 }
 
 export async function getTicketById(id) {
