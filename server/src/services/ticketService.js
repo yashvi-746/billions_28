@@ -1,4 +1,5 @@
 import { query } from '../db/pool.js';
+import { FIRST_RESPONSE_JOIN_SQL, SLA_SELECT_SQL, SLA_BREACHED_CONDITION_SQL, attachSlaState } from './sla.js';
 
 const PAGE_SIZE = 20;
 
@@ -19,7 +20,7 @@ const SORT_ORDERS = { asc: 'ASC', desc: 'DESC' };
  * Supports free-text search on subject, filtering by status and priority,
  * and sorting by any column the UI exposes in its dropdown.
  */
-export async function listTickets({ orgId, page = 1, search = '', status, priority, sortBy = 'created_at', order = 'desc' }) {
+export async function listTickets({ orgId, page = 1, search = '', status, priority, sortBy = 'created_at', order = 'desc', breached = false }) {
   const where = ['t.org_id = ?'];
   const params = [orgId];
 
@@ -36,6 +37,12 @@ export async function listTickets({ orgId, page = 1, search = '', status, priori
     params.push(priority);
   }
 
+  const now = new Date();
+  if (breached) {
+    where.push(`(${SLA_BREACHED_CONDITION_SQL})`);
+    params.push(now);
+  }
+
   const whereSql = where.join(' AND ');
   const safePage = Math.max(1, Number(page) || 1);
   const offset = (safePage - 1) * PAGE_SIZE;
@@ -44,24 +51,36 @@ export async function listTickets({ orgId, page = 1, search = '', status, priori
 
   const rows = await query(
     `SELECT t.id, t.subject, t.status, t.priority, t.created_at, t.updated_at,
-            t.assignee_id, u.name AS assignee_name, r.name AS requester_name
+            t.assignee_id, u.name AS assignee_name, r.name AS requester_name,
+            ${SLA_SELECT_SQL}
        FROM tickets t
        LEFT JOIN users u ON u.id = t.assignee_id
        JOIN users r ON r.id = t.requester_id
+       ${FIRST_RESPONSE_JOIN_SQL}
       WHERE ${whereSql}
       ORDER BY ${orderColumn} ${orderDirection}
       LIMIT ? OFFSET ?`,
     [...params, PAGE_SIZE, offset]
   );
 
-  // Attach the comment count each row needs for the list badge.
-  for (const row of rows) {
-    const [{ c }] = await query('SELECT COUNT(*) AS c FROM comments WHERE ticket_id = ?', [row.id]);
-    row.comment_count = c;
+  for (const row of rows) attachSlaState(row, now);
+
+  // Attach the comment count each row needs for the list badge. Batched
+  // in one query instead of one round trip per row.
+  if (rows.length) {
+    const counts = await query(
+      `SELECT ticket_id, COUNT(*) AS c FROM comments WHERE ticket_id IN (?) GROUP BY ticket_id`,
+      [rows.map((r) => r.id)]
+    );
+    const countByTicket = new Map(counts.map((c) => [c.ticket_id, c.c]));
+    for (const row of rows) row.comment_count = countByTicket.get(row.id) || 0;
   }
 
   const [{ total }] = await query(
-    `SELECT COUNT(*) AS total FROM tickets t WHERE ${whereSql}`,
+    `SELECT COUNT(*) AS total
+       FROM tickets t
+       ${FIRST_RESPONSE_JOIN_SQL}
+      WHERE ${whereSql}`,
     params
   );
 
@@ -70,14 +89,16 @@ export async function listTickets({ orgId, page = 1, search = '', status, priori
 
 export async function getTicketById(id) {
   const rows = await query(
-    `SELECT t.*, u.name AS assignee_name, r.name AS requester_name, r.email AS requester_email
+    `SELECT t.*, u.name AS assignee_name, r.name AS requester_name, r.email AS requester_email,
+            ${SLA_SELECT_SQL}
        FROM tickets t
        LEFT JOIN users u ON u.id = t.assignee_id
        JOIN users r ON r.id = t.requester_id
+       ${FIRST_RESPONSE_JOIN_SQL}
       WHERE t.id = ?`,
     [id]
   );
-  return rows[0] || null;
+  return attachSlaState(rows[0]) || null;
 }
 
 export async function listComments(ticketId) {
