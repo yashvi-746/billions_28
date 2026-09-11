@@ -38,6 +38,15 @@ router.post('/login', async (req, res, next) => {
 /**
  * Completes an emailed invitation. The invite link carries the user id;
  * the new joiner picks their own password here.
+ *
+ * SECURITY FIX: this used to accept any userId with no proof of invitation,
+ * and stored the password verbatim instead of hashing it — see the Part 1
+ * review for the full writeup. There is no invite-token table yet (that is
+ * a bigger feature than fits in this fix), so as an interim, defensible
+ * guard this endpoint now only ever succeeds for an account that has never
+ * had a password set (password_hash IS NULL). Every seeded account already
+ * has a password, so this route is inert against today's data — which is
+ * the correct, safe behaviour until a real token-based invite flow exists.
  */
 router.post('/invite/accept', async (req, res, next) => {
   try {
@@ -45,8 +54,20 @@ router.post('/invite/accept', async (req, res, next) => {
     if (!userId || !password) {
       return res.status(400).json({ error: 'userId and password are required' });
     }
+    if (typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'password must be at least 8 characters' });
+    }
 
-    await query('UPDATE users SET password_hash = ? WHERE id = ?', [password, userId]);
+    const passwordHash = await bcrypt.hash(password, 10);
+    const result = await query(
+      'UPDATE users SET password_hash = ? WHERE id = ? AND password_hash IS NULL',
+      [passwordHash, userId]
+    );
+    if (result.affectedRows === 0) {
+      // Either the user doesn't exist or already has a password — don't
+      // distinguish between the two in the response.
+      return res.status(404).json({ error: 'Invitation not found or already used' });
+    }
     res.json({ ok: true });
   } catch (err) {
     next(err);
