@@ -31,7 +31,11 @@ router.get('/', requireAuth, async (req, res, next) => {
 router.get('/:id', requireAuth, async (req, res, next) => {
   try {
     const ticket = await getTicketById(Number(req.params.id));
-    if (!ticket) return res.status(404).json({ error: 'Not found' });
+    // Return 404 (not 403) for cross-org tickets so we don't confirm to a
+    // caller that a given id exists in another organisation.
+    if (!ticket || ticket.org_id !== req.user.orgId) {
+      return res.status(404).json({ error: 'Not found' });
+    }
 
     const comments = await listComments(ticket.id);
     res.json({ ticket, comments });
@@ -59,9 +63,18 @@ router.post('/', requireAuth, async (req, res, next) => {
   }
 });
 
-router.patch('/:id/assign', requireAuth, async (req, res, next) => {
+// Claiming a ticket is an agent action (README: "agent — claim and answer any
+// ticket"). Requesters must not be able to claim tickets, in their own org or
+// anyone else's.
+router.patch('/:id/assign', requireAuth, requireRole('agent', 'admin'), async (req, res, next) => {
   try {
-    const result = await assignTicket(Number(req.params.id), req.user.id);
+    const ticketId = Number(req.params.id);
+    const existing = await getTicketById(ticketId);
+    if (!existing || existing.org_id !== req.user.orgId) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    const result = await assignTicket(ticketId, req.user.id);
     if (!result) return res.status(404).json({ error: 'Not found' });
     if (result.conflict) {
       return res.status(409).json({ error: 'Ticket already assigned', ticket: result.ticket });
@@ -72,10 +85,14 @@ router.patch('/:id/assign', requireAuth, async (req, res, next) => {
   }
 });
 
-router.delete('/:id', requireAuth, async (req, res, next) => {
+// README: "admin — everything an agent can, plus delete tickets". Deletion
+// also has to stay inside the caller's organisation.
+router.delete('/:id', requireAuth, requireRole('admin'), async (req, res, next) => {
   try {
     const ticket = await getTicketById(Number(req.params.id));
-    if (!ticket) return res.status(404).json({ error: 'Not found' });
+    if (!ticket || ticket.org_id !== req.user.orgId) {
+      return res.status(404).json({ error: 'Not found' });
+    }
     await deleteTicket(ticket.id);
     res.status(204).end();
   } catch (err) {
