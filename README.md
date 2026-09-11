@@ -1,14 +1,19 @@
-# Meridian Helpdesk
+# Meridian Helpdesk — Internship Submission
 
-A small internal support-desk application. Organisations raise tickets, agents claim
-and answer them, everyone comments.
+A small internal support-desk application developed for the **Bilions Full Stack Developer Internship Exercise**.
 
-This repository is the starting point for the Bilions Full Stack Developer internship
-exercise. It runs. Read the brief for what to do with it.
+---
+
+## 📌 Deliverable Documents
+
+1. **Code Review & Top 5 Fixes**: [`PART1_REVIEW.md`](./PART1_REVIEW.md)
+2. **Part 2 SLA Feature Decision Notes**: [`DECISIONS.md`](./DECISIONS.md)
+3. **AI Assistance Disclosure Log**: [`AI_LOG.md`](./AI_LOG.md)
 
 ---
 
 ## Stack
+
 
 | Layer    | Technology                                            |
 | -------- | ----------------------------------------------------- |
