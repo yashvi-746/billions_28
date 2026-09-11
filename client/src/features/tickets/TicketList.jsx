@@ -13,14 +13,33 @@ export default function TicketList() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
   const [status, setStatus] = useState('');
   const [priority, setPriority] = useState('');
   const [sortBy, setSortBy] = useState('created_at');
+  const [breachedOnly, setBreachedOnly] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Debounce the search box so we don't fire a request per keystroke.
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setSearch(searchInput);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [searchInput]);
+
+  // NOTE: this effect used to only watch `page`, so search/status/priority/
+  // sortBy silently did nothing until the page number changed (Part 1
+  // review, finding #6). The breached-only filter added here needs the
+  // same refetch, so this dependency array was corrected as part of Part 2
+  // — see DECISIONS.md.
   useEffect(() => {
     setLoading(true);
-    const params = new URLSearchParams({ page, search, status, priority, sortBy, order: 'desc' });
+    const params = new URLSearchParams({
+      page, search, status, priority, sortBy, order: 'desc',
+      ...(breachedOnly ? { breached: 'true' } : {}),
+    });
     api(`/tickets?${params.toString()}`)
       .then((data) => {
         setRows(data.rows);
@@ -28,7 +47,17 @@ export default function TicketList() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [page]);
+  }, [page, search, status, priority, sortBy, breachedOnly]);
+
+  // Any filter change other than the page itself starts back at page 1 —
+  // otherwise you can land on a page number past the end of a narrower
+  // result set and see an empty table.
+  function updateFilter(setter) {
+    return (value) => {
+      setter(value);
+      setPage(1);
+    };
+  }
 
   async function handleDelete(id) {
     await api(`/tickets/${id}`, { method: 'DELETE' });
@@ -44,25 +73,33 @@ export default function TicketList() {
       <div className="filters">
         <input
           placeholder="Search subject…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
         />
-        <select value={status} onChange={(e) => setStatus(e.target.value)}>
+        <select value={status} onChange={(e) => updateFilter(setStatus)(e.target.value)}>
           {STATUSES.map((s) => (
             <option key={s} value={s}>{s || 'Any status'}</option>
           ))}
         </select>
-        <select value={priority} onChange={(e) => setPriority(e.target.value)}>
+        <select value={priority} onChange={(e) => updateFilter(setPriority)(e.target.value)}>
           {PRIORITIES.map((p) => (
             <option key={p} value={p}>{p || 'Any priority'}</option>
           ))}
         </select>
-        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+        <select value={sortBy} onChange={(e) => updateFilter(setSortBy)(e.target.value)}>
           <option value="created_at">Created</option>
           <option value="updated_at">Updated</option>
           <option value="priority">Priority</option>
           <option value="status">Status</option>
         </select>
+        <label className="breached-filter">
+          <input
+            type="checkbox"
+            checked={breachedOnly}
+            onChange={(e) => updateFilter(setBreachedOnly)(e.target.checked)}
+          />
+          Breached only
+        </label>
       </div>
 
       {loading && <p>Loading…</p>}
@@ -70,7 +107,7 @@ export default function TicketList() {
       <table>
         <thead>
           <tr>
-            <th>#</th><th>Subject</th><th>Status</th><th>Priority</th>
+            <th>#</th><th>Subject</th><th>Status</th><th>Priority</th><th>SLA</th>
             <th>Assignee</th><th>Comments</th><th>Created</th><th />
           </tr>
         </thead>
@@ -81,6 +118,7 @@ export default function TicketList() {
               <td><Link to={`/tickets/${t.id}`}>{t.subject}</Link></td>
               <td>{t.status}</td>
               <td>{t.priority}</td>
+              <td>{t.sla?.breached && <span className="badge-breached">Breached</span>}</td>
               <td>{t.assignee_name || '—'}</td>
               <td>{t.comment_count}</td>
               <td>{new Date(t.created_at).toLocaleString()}</td>

@@ -46,11 +46,21 @@ export default function TicketDetail() {
 
   return (
     <div className="ticket-detail">
-      <h1>{ticket.subject}</h1>
+      <h1>{ticket.subject} {ticket.sla?.breached && <span className="badge-breached">Breached</span>}</h1>
       <p className="meta">
         #{ticket.id} · {ticket.status} · {ticket.priority} ·
         requested by {ticket.requester_name} ({ticket.requester_email})
       </p>
+      {ticket.sla && (
+        <p className={`sla-line${ticket.sla.breached ? ' breached' : ''}`}>
+          SLA target {ticket.sla.targetHours}h · due {new Date(ticket.sla.dueAt).toLocaleString()}
+          {ticket.sla.firstResponseAt
+            ? ` · first response ${new Date(ticket.sla.firstResponseAt).toLocaleString()}`
+            : ticket.sla.breached
+              ? ' · no response yet — breached'
+              : ' · no response yet'}
+        </p>
+      )}
       <p className="body">{ticket.body}</p>
 
       {!ticket.assignee_id && <button onClick={claim}>Claim this ticket</button>}
